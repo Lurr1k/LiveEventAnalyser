@@ -5,6 +5,11 @@ The "Live Event Agentic Assistant" is a real-time, AI-driven heads-up display (H
 
 The core focus of this MVP is **transcript analysis**—using the text of what is being said to generate actionable suggestions regarding content relevance, pacing, and audience engagement, thereby elevating the value of the in-person event experience.
 
+### Real-Time Directive Examples:
+* **Topic Stagnation & Pacing:** If speakers dwell on a single topic for too long or begin repeating themselves, the software—aware of the event schedule—will explicitly suggest that they move on to the next topic on the agenda.
+* **Conceptual Friction & Clarity:** If the speakers are discussing a highly complex topic that might be unclear to the audience, the system can suggest that they elaborate on specific terms, or even provide immediate bullet points of prerequisite concepts they should explain beforehand so the audience can follow along.
+* **Engagement Drop-Off & Gamification:** If the transcript indicates that the discussion has become mundane or dry for a prolonged period, the system will suggest targeted questions to throw to the room or prompt specific ways to interact with the audience, gamifying the experience in real time.
+
 ## 2. Core Features & Hackathon "Lane" Alignment
 
 ### 2.1 Audience-Aware Coaching (Lane 02: Connect Better)
