@@ -2,4 +2,22 @@
 name = "eurohacknl"
 version = "0.1.0"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "openai>=2.0.0",
+    "openpyxl>=3.1.0",
+    "pandas>=2.2.0",
+]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = [
+    "main",
+    "audience",
+    "data_loading",
+    "live_analysis",
+    "live_ingestion",
+    "rule_analysis",
+]
