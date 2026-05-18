@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
-import re
 import time
-from collections import Counter, deque
+from collections import deque
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, AsyncIterator, Iterable
@@ -78,26 +78,6 @@ class RollingTranscript:
         return "\n".join(
             f"[{chunk.timestamp}] {chunk.speaker}: {chunk.text}" for chunk in self.chunks
         )
-
-    def recent_terms(self) -> Counter[str]:
-        words = re.findall(r"[a-z][a-z0-9-]{3,}", self.text().lower())
-        stop_words = {
-            "about",
-            "because",
-            "from",
-            "have",
-            "into",
-            "just",
-            "that",
-            "their",
-            "there",
-            "this",
-            "what",
-            "when",
-            "with",
-            "your",
-        }
-        return Counter(word for word in words if word not in stop_words)
 
 
 def load_attendees(path: str | Path):
@@ -190,31 +170,76 @@ async def analyze_live_text_flow(
     client: Any | None = None,
     model: str = DEFAULT_MODEL,
     max_window_chunks: int = 24,
-    min_analysis_interval_seconds: float = 2.5,
+    analysis_interval_seconds: float = 5.0,
+    min_analysis_interval_seconds: float | None = None,
     use_llm: bool = True,
 ) -> AsyncIterator[UICommand]:
     rolling = RollingTranscript(max_chunks=max_window_chunks)
-    last_analysis_at = 0.0
+    chunk_queue: asyncio.Queue[dict[str, Any] | str | None] = asyncio.Queue()
+    interval = min_analysis_interval_seconds or analysis_interval_seconds
+    next_analysis_at = time.monotonic() + interval
+    received_count = 0
+    analyzed_count = 0
+    producer_errors: list[BaseException] = []
 
-    async for raw_chunk in live_chunks:
-        chunk = normalize_transcript_chunk(raw_chunk)
-        if not chunk.text:
-            continue
+    async def collect_chunks() -> None:
+        try:
+            async for raw_chunk in live_chunks:
+                await chunk_queue.put(raw_chunk)
+        except BaseException as exc:
+            producer_errors.append(exc)
+        finally:
+            await chunk_queue.put(None)
 
-        rolling.append(chunk)
-        now = time.monotonic()
-        if now - last_analysis_at < min_analysis_interval_seconds:
-            continue
+    producer = asyncio.create_task(collect_chunks())
+    stream_open = True
 
-        last_analysis_at = now
-        yield await analyze_with_gpt54_mini(
-            rolling,
-            session_context,
-            audience_profile,
-            client=client,
-            model=model,
-            use_llm=use_llm,
-        )
+    try:
+        while stream_open or not chunk_queue.empty():
+            timeout = max(0.0, next_analysis_at - time.monotonic())
+            try:
+                raw_chunk = await asyncio.wait_for(chunk_queue.get(), timeout=timeout)
+            except asyncio.TimeoutError:
+                if rolling.chunks and received_count > analyzed_count:
+                    yield await analyze_with_gpt54_mini(
+                        rolling,
+                        session_context,
+                        audience_profile,
+                        client=client,
+                        model=model,
+                        use_llm=use_llm,
+                    )
+                    analyzed_count = received_count
+                next_analysis_at = time.monotonic() + interval
+                continue
+
+            if raw_chunk is None:
+                stream_open = False
+                continue
+
+            chunk = normalize_transcript_chunk(raw_chunk)
+            if not chunk.text:
+                continue
+
+            rolling.append(chunk)
+            received_count += 1
+
+        if rolling.chunks and received_count > analyzed_count:
+            yield await analyze_with_gpt54_mini(
+                rolling,
+                session_context,
+                audience_profile,
+                client=client,
+                model=model,
+                use_llm=use_llm,
+            )
+        if producer_errors:
+            raise producer_errors[0]
+    finally:
+        if not producer.done():
+            producer.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await producer
 
 
 async def stream_transcript_file(

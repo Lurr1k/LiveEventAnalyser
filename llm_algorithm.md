@@ -1,32 +1,42 @@
-# Async Live Transcript Analysis Algorithm
+# Time-Slotted Live Transcript Analysis
 
-This backend path implements step 7 from `order.md`: feed a rolling live transcript window plus session and audience context into `gpt-5.4-mini`, then return one structured `UI Command`.
+The intended backend algorithm is LLM-led. The backend should not try to detect jargon, fatigue, or FOMO with keyword lists. It should collect live transcript chunks into a rolling window and ask `gpt-5.4-mini` to analyze that window on a fixed cadence, for example every 5 seconds.
 
-## Flow
+## Runtime Flow
 
-1. Load attendee rows from `../Data/hackathon_mock_attendees.xlsx`.
-2. Load session metadata from `../Data/sessions/*.md`.
-3. Build the active audience profile:
-   - attendee count
-   - AI experience distribution
-   - academic background distribution
-   - top attendee intents
-   - beginner ratio
-4. Normalize each live transcript update into:
+1. Load attendee and session context once:
+   - `load_attendees("../Data/hackathon_mock_attendees.xlsx")`
+   - `load_sessions("../Data/sessions")`
+   - `get_audience_profile(...)`
+2. Start live transcript ingestion.
+3. Normalize every incoming transcript chunk into:
 
 ```python
 {"timestamp": "00:00:00", "speaker": "Speaker 1", "text": "..."}
 ```
 
-5. Append each chunk to a bounded rolling transcript window.
-6. Throttle analysis calls so the model is not called on every token.
-7. Run deterministic rules first as a fallback signal:
-   - beginner-heavy audience plus jargon -> coaching
-   - repeated topic terms -> fatigue
-   - strong takeaway language -> FOMO
-8. Send the rolling transcript, session context, audience profile, and fallback signal to `gpt-5.4-mini`.
-9. Require strict JSON matching the `UI Command` schema.
-10. If the model is unavailable, slow, or returns invalid JSON, return the rule-based command.
+4. Append normalized chunks to a bounded rolling transcript window.
+5. Every analysis slot, default `5.0` seconds, send the current rolling window to `gpt-5.4-mini`.
+6. Ask the model for exactly one structured UI command.
+7. If no new transcript arrived since the previous slot, skip that slot.
+8. If the model is unavailable, return a neutral fallback command so the HUD stays valid.
+
+## What The Backend Does Not Do
+
+The backend does not maintain lists of jargon words, insight phrases, or fatigue keywords. Those judgments belong to the model because they depend on session context, audience profile, phrasing, and the evolving discussion.
+
+The only non-LLM fallback is neutral:
+
+```python
+{
+    "type": "neutral",
+    "priority": "low",
+    "headline": "Keep listening",
+    "detail": "No model analysis is available for this time window.",
+    "target": "speaker",
+    "related_topic": None,
+}
+```
 
 ## Prompt
 
@@ -54,30 +64,35 @@ Rules:
 ```python
 import asyncio
 from openai import AsyncOpenAI
-from live_analysis import (
-    analyze_live_text_flow,
-    build_audience_profile,
-    load_attendees,
-    load_sessions,
-    stream_transcript_file,
-)
+from audience import get_audience_profile
+from data_loading import discover_data_paths, load_attendees, load_sessions
+from live_analysis import analyze_live_text_flow
+from live_ingestion import TranscriptIngestionState, replay_transcript_file
 
 async def main():
-    attendees = load_attendees("../Data/hackathon_mock_attendees.xlsx")
-    session = load_sessions("../Data/sessions")[0]
-    profile = build_audience_profile(attendees, session["session_id"], session["room"])
+    paths = discover_data_paths()
+    attendees = load_attendees(paths["attendees"])
+    sessions = load_sessions(paths["sessions"])
 
-    client = AsyncOpenAI()
-    transcript_source = stream_transcript_file(session["path"], delay_seconds=0.2)
+    session = sessions[0]
+    profile = get_audience_profile(attendees, sessions, session["session_id"])
+    state = TranscriptIngestionState(max_window_chunks=24)
+
+    producer = asyncio.create_task(
+        replay_transcript_file(session["path"], state, delay_seconds=0.2)
+    )
 
     async for command in analyze_live_text_flow(
-        transcript_source,
+        state.chunks(),
         session,
         profile,
-        client=client,
+        client=AsyncOpenAI(),
         model="gpt-5.4-mini",
+        analysis_interval_seconds=5.0,
     ):
         print(command)
+
+    await producer
 
 asyncio.run(main())
 ```

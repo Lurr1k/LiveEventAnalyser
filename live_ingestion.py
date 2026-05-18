@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-import re
 import time
-from collections import Counter, deque
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, AsyncIterator, Literal
@@ -12,24 +11,6 @@ from data_loading import normalize_transcript_chunk
 
 
 ConnectionStatus = Literal["disconnected", "waiting", "receiving"]
-
-TOPIC_STOP_WORDS = {
-    "about",
-    "because",
-    "from",
-    "have",
-    "into",
-    "just",
-    "that",
-    "their",
-    "there",
-    "this",
-    "what",
-    "when",
-    "with",
-    "your",
-}
-
 
 @dataclass(frozen=True)
 class IngestedTranscriptChunk:
@@ -63,9 +44,7 @@ class TranscriptIngestionState:
     _queue: asyncio.Queue[IngestedTranscriptChunk | None] = field(init=False, repr=False)
     _rolling_window: deque[IngestedTranscriptChunk] = field(default_factory=deque, repr=False)
     _sequence: int = field(default=0, init=False, repr=False)
-    _topic: str | None = field(default=None, init=False, repr=False)
-    _topic_started_at: float | None = field(default=None, init=False, repr=False)
-    _topic_chunk_count: int = field(default=0, init=False, repr=False)
+    _first_chunk_received_at: float | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._queue = asyncio.Queue(maxsize=self.queue_maxsize)
@@ -127,13 +106,13 @@ class TranscriptIngestionState:
         return [chunk.as_transcript_chunk() for chunk in self._rolling_window]
 
     def topic_state(self) -> TopicState:
-        if self._topic_started_at is None:
+        if self._first_chunk_received_at is None:
             elapsed = 0.0
         else:
-            elapsed = max(0.0, time.monotonic() - self._topic_started_at)
+            elapsed = max(0.0, time.monotonic() - self._first_chunk_received_at)
         return TopicState(
-            current_topic=self._topic,
-            topic_chunk_count=self._topic_chunk_count,
+            current_topic=None,
+            topic_chunk_count=len(self._rolling_window),
             topic_elapsed_seconds=elapsed,
         )
 
@@ -153,23 +132,10 @@ class TranscriptIngestionState:
 
     def _append_to_window(self, chunk: IngestedTranscriptChunk) -> None:
         self._rolling_window.append(chunk)
+        if self._first_chunk_received_at is None:
+            self._first_chunk_received_at = chunk.received_at
         while len(self._rolling_window) > self.max_window_chunks:
             self._rolling_window.popleft()
-        self._update_topic_state()
-
-    def _update_topic_state(self) -> None:
-        topic = _dominant_topic(self._rolling_window)
-        if topic is None:
-            return
-
-        now = time.monotonic()
-        if topic != self._topic:
-            self._topic = topic
-            self._topic_started_at = now
-            self._topic_chunk_count = 1
-            return
-
-        self._topic_chunk_count += 1
 
 
 async def replay_transcript_file(
@@ -214,15 +180,3 @@ async def iter_manual_chunks(
         yield await queue.get()
 
 
-def _dominant_topic(chunks: deque[IngestedTranscriptChunk]) -> str | None:
-    terms: Counter[str] = Counter()
-    for chunk in chunks:
-        terms.update(
-            word
-            for word in re.findall(r"[a-z][a-z0-9-]{3,}", chunk.text.lower())
-            if word not in TOPIC_STOP_WORDS
-        )
-    if not terms:
-        return None
-    topic, count = terms.most_common(1)[0]
-    return topic if count >= 2 else None
