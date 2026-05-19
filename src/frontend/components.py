@@ -7,6 +7,17 @@ def render_sidebar(sessions, attendees, profile, is_running):
     with st.sidebar:
         st.title("Event Controls")
         
+        source = st.selectbox(
+            "Transcript Source",
+            options=["browser_mic", "demo_markdown"],
+            index=1,
+            format_func=lambda value: {
+                "browser_mic": "Browser mic",
+                "demo_markdown": "Demo replay",
+            }[value],
+            disabled=is_running,
+        )
+        
         # Session Selection
         session_options = {s["session_id"]: s for s in sessions}
         session_names = {s["session_id"]: s["title"] for s in sessions}
@@ -15,17 +26,7 @@ def render_sidebar(sessions, attendees, profile, is_running):
             "Select Session",
             options=list(session_options.keys()),
             format_func=lambda x: session_names[x],
-            disabled=is_running
-        )
-
-        source = st.selectbox(
-            "Transcript Source",
-            options=["browser_mic", "demo_markdown"],
-            format_func=lambda value: {
-                "browser_mic": "Browser mic",
-                "demo_markdown": "Demo markdown replay",
-            }[value],
-            disabled=is_running,
+            disabled=is_running or source == "browser_mic"
         )
         
         if is_running:
