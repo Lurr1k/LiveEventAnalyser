@@ -23,7 +23,7 @@ class DataLoadingError(RuntimeError):
 
 def discover_data_paths(project_root: str | Path | None = None) -> dict[str, Path]:
     root = Path(project_root) if project_root else Path(__file__).resolve().parent.parent.parent
-    data_dir = root / "Data"
+    data_dir = root / "data"
     return {
         "data_dir": data_dir,
         "attendees": data_dir / "hackathon_mock_attendees.xlsx",
