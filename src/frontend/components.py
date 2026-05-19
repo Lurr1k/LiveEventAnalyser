@@ -51,11 +51,11 @@ def render_transcript(chunks):
         if not chunks:
             st.info("Waiting for transcript...")
         else:
-            # Render chunks in reverse order (newest at top) to avoid scrolling issues
+            # Render chunks in normal order (newest at bottom)
             total = len(chunks)
-            for i, chunk in enumerate(reversed(chunks)):
-                # Calculate fading opacity (1.0 for newest, down to 0.3 for oldest)
-                alpha = 1.0 - (0.7 * (i / max(1, total - 1)))
+            for i, chunk in enumerate(chunks):
+                # Calculate fading opacity (0.3 for oldest (i=0), 1.0 for newest (i=total-1))
+                alpha = 0.3 + (0.7 * (i / max(1, total - 1))) if total > 1 else 1.0
                 
                 # Basic parsing to bold the speaker name
                 formatted_chunk = chunk
@@ -69,6 +69,22 @@ def render_transcript(chunks):
                 
                 # Apply opacity using HTML span
                 st.markdown(f'<span style="opacity: {alpha:.2f}; display: block; margin-bottom: 0.5rem;">{formatted_chunk}</span>', unsafe_allow_html=True)
+
+            # Inject JS to scroll the container to the bottom
+            import streamlit.components.v1 as components
+            components.html(
+                """
+                <script>
+                const parent = window.parent.document;
+                const scrollableContainers = parent.querySelectorAll('[data-testid="stScrollableContainer"]');
+                if (scrollableContainers.length > 0) {
+                    const target = scrollableContainers[0];
+                    target.scrollTop = target.scrollHeight;
+                }
+                </script>
+                """,
+                height=0,
+            )
 
 def render_action_zone(command):
     """Render the action zone at the bottom, prioritizing LLM commands."""
@@ -92,10 +108,8 @@ def render_action_zone(command):
         else:
             box = st.success
             
-    icon = "💡" if command.type != "neutral" else "ℹ️"
-    
     body = f"### {command.headline}\n\n{command.detail}"
     if command.related_topic:
         body += f"\n\n*Related Topic:* {command.related_topic}"
         
-    box(body, icon=icon)
+    box(body, icon=None)
