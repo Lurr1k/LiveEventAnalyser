@@ -6,6 +6,13 @@ import streamlit as st
 # Ensure backend imports work
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
+except ImportError:
+    pass
+
 from backend.data_loading import discover_data_paths, load_attendees, load_sessions
 from backend.audience import get_audience_profile
 from frontend.state import SessionStateManager
@@ -50,7 +57,12 @@ def main():
             selected_id = st.session_state.selected_id
         profile = get_audience_profile(attendees, sessions, selected_id)
         
-    new_selected_id, action = render_sidebar(sessions, attendees, profile, is_running)
+    new_selected_id, transcript_source, action = render_sidebar(
+        sessions,
+        attendees,
+        profile,
+        is_running,
+    )
     
     if new_selected_id != selected_id:
         st.session_state.selected_id = new_selected_id
@@ -60,7 +72,7 @@ def main():
         session = next(s for s in sessions if s["session_id"] == new_selected_id)
         # Recompute profile just in case
         profile = get_audience_profile(attendees, sessions, new_selected_id)
-        manager.start(session, profile)
+        manager.start(session, profile, source=transcript_source)
         st.rerun()
     elif action == "stop":
         manager.stop()
@@ -72,7 +84,11 @@ def main():
     if backend_state["error"]:
         st.error(f"Backend Error: {backend_state['error']}")
         
-    render_transcript(backend_state["transcript_chunks"])
+    render_transcript(
+        backend_state["transcript_chunks"],
+        status=backend_state["ingestion_status"],
+        error=backend_state["ingestion_error"],
+    )
     render_action_zone(backend_state["latest_command"])
     
     # Auto-refresh loop if the backend is running
