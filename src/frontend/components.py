@@ -62,6 +62,7 @@ def render_browser_microphone(manager, *, enabled: bool):
     try:
         import av
         from streamlit_webrtc import WebRtcMode, webrtc_streamer
+        from streamlit_webrtc.webrtc import SignallingTimeoutError
     except ImportError:
         st.error("Browser mic capture requires streamlit-webrtc and av.")
         return
@@ -73,13 +74,28 @@ def render_browser_microphone(manager, *, enabled: bool):
             manager.submit_audio_chunk(resampled.to_ndarray().tobytes())
         return frame
 
-    webrtc_streamer(
-        key="browser-mic-elevenlabs",
-        mode=WebRtcMode.SENDONLY,
-        audio_frame_callback=audio_frame_callback,
-        media_stream_constraints={"video": False, "audio": True},
-        async_processing=True,
-    )
+    retry = st.session_state.get("browser_mic_retry", 0)
+    try:
+        context = webrtc_streamer(
+            key=f"browser-mic-elevenlabs-{retry}",
+            mode=WebRtcMode.SENDONLY,
+            audio_frame_callback=audio_frame_callback,
+            media_stream_constraints={"video": False, "audio": True},
+            rtc_configuration={"iceServers": []},
+            async_processing=True,
+        )
+    except SignallingTimeoutError:
+        st.warning(
+            "Browser microphone setup timed out before WebRTC finished signalling. "
+            "This can happen on the first attempt; retry the mic component."
+        )
+        if st.button("Retry microphone", use_container_width=True):
+            st.session_state.browser_mic_retry = retry + 1
+            st.rerun()
+        return
+
+    playing = bool(getattr(getattr(context, "state", None), "playing", False))
+    st.caption(f"WebRTC: {'recording' if playing else 'waiting for browser mic'}")
 
 
 def render_analysis_status(state):
@@ -90,6 +106,33 @@ def render_analysis_status(state):
         st.warning(f"Analysis fallback: {state.get('analysis_error') or 'No model output.'}")
     elif state.get("is_running"):
         st.caption("Analysis: waiting for transcript window")
+
+
+def render_transcription_diagnostics(state):
+    if not state.get("is_running"):
+        return
+
+    audio_count = state.get("audio_chunk_count", 0)
+    last_audio = _relative_time(state.get("last_audio_chunk_at"))
+    last_event = state.get("last_elevenlabs_event_type") or "none"
+    last_event_at = _relative_time(state.get("last_elevenlabs_event_at"))
+    elevenlabs_status = "connected" if state.get("elevenlabs_connected") else "waiting"
+    close_error = state.get("elevenlabs_close_error")
+    attempts = state.get("elevenlabs_connection_attempts", 0)
+
+    st.caption(
+        " | ".join(
+            [
+                f"Browser audio chunks: {audio_count}",
+                f"last audio: {last_audio}",
+                f"ElevenLabs: {elevenlabs_status}",
+                f"attempts: {attempts}",
+                f"last event: {last_event} ({last_event_at})",
+            ]
+        )
+    )
+    if close_error:
+        st.warning(close_error)
 
 def render_transcript(chunks, *, status="disconnected", error=None):
     """Render the rolling transcript feed at the bottom."""
@@ -187,3 +230,17 @@ def render_action_zone(command):
     """
     
     st.markdown(html, unsafe_allow_html=True)
+
+
+def _relative_time(timestamp):
+    if not timestamp:
+        return "never"
+    try:
+        import time
+
+        elapsed = max(0.0, time.time() - float(timestamp))
+    except (TypeError, ValueError):
+        return "unknown"
+    if elapsed < 1:
+        return "now"
+    return f"{elapsed:.0f}s ago"

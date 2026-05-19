@@ -2,8 +2,10 @@ import pytest
 
 from backend.elevenlabs_live import (
     ElevenLabsRealtimeConfig,
+    _receive_transcripts,
     _send_audio,
     convert_elevenlabs_event,
+    first_audio_chunk,
 )
 from backend.live_ingestion import TranscriptIngestionState
 
@@ -99,3 +101,65 @@ async def test_send_audio_streams_browser_pcm_chunks():
 
     assert len(websocket.messages) == 2
     assert all('"message_type": "input_audio_chunk"' in message for message in websocket.messages)
+
+
+@pytest.mark.asyncio
+async def test_receive_transcripts_reports_event_types():
+    class FakeWebSocket:
+        def __aiter__(self):
+            self.messages = iter(
+                [
+                    '{"message_type": "session_started"}',
+                    '{"message_type": "partial_transcript", "text": "Hel"}',
+                    '{"message_type": "committed_transcript", "text": "Hello"}',
+                ]
+            )
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self.messages)
+            except StopIteration:
+                raise StopAsyncIteration
+
+    state = TranscriptIngestionState()
+    events = []
+
+    await _receive_transcripts(FakeWebSocket(), state, on_event=events.append)
+
+    assert events == [
+        "session_started",
+        "partial_transcript",
+        "committed_transcript",
+    ]
+    assert state.rolling_window() == [
+        {"timestamp": "00:00:00", "speaker": "Speaker", "text": "Hello"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_first_audio_chunk_replays_first_non_empty_chunk():
+    async def chunks():
+        yield b""
+        yield b"\x01\x02"
+        yield b"\x03\x04"
+
+    first, replayable = await first_audio_chunk(chunks(), timeout_seconds=1.0)
+
+    assert first == b"\x01\x02"
+    replayed = []
+    async for chunk in replayable:
+        replayed.append(chunk)
+    assert replayed == [b"\x01\x02", b"\x03\x04"]
+
+
+@pytest.mark.asyncio
+async def test_first_audio_chunk_times_out_without_audio():
+    async def chunks():
+        while True:
+            yield b""
+
+    first, replayable = await first_audio_chunk(chunks(), timeout_seconds=0.01)
+
+    assert first is None
+    assert replayable is not None

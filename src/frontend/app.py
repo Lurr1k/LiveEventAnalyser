@@ -1,6 +1,5 @@
 import sys
 from pathlib import Path
-import time
 import streamlit as st
 
 # Ensure backend imports work
@@ -21,6 +20,7 @@ from frontend.components import (
     render_browser_microphone,
     render_sidebar,
     render_transcript,
+    render_transcription_diagnostics,
     render_action_zone,
 )
 
@@ -92,19 +92,31 @@ def main():
         manager,
         enabled=is_running and backend_state.get("source") in {"browser_mic", "elevenlabs_live"},
     )
-    render_analysis_status(backend_state)
-        
-    render_action_zone(backend_state["latest_command"])
+    render_live_hud(manager)
+
+def render_live_hud(manager):
+    if hasattr(st, "fragment"):
+        @st.fragment(run_every="1s")
+        def live_hud_fragment():
+            _render_live_hud_body(manager)
+
+        live_hud_fragment()
+        return
+
+    _render_live_hud_body(manager)
+
+
+def _render_live_hud_body(manager):
+    state = manager.get_state()
+    render_analysis_status(state)
+    render_transcription_diagnostics(state)
+    render_action_zone(state["latest_command"])
     render_transcript(
-        backend_state["transcript_chunks"],
-        status=backend_state.get("ingestion_status", "disconnected"),
-        error=backend_state.get("ingestion_error"),
+        state["transcript_chunks"],
+        status=state.get("ingestion_status", "disconnected"),
+        error=state.get("ingestion_error"),
     )
-    
-    # Auto-refresh loop if the backend is running
-    if is_running:
-        time.sleep(1) # Refresh every second
-        st.rerun()
+
 
 if __name__ == "__main__":
     main()
