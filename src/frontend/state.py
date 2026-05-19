@@ -6,7 +6,7 @@ import threading
 import time
 from typing import Any, Literal
 
-from backend.elevenlabs_live import first_audio_chunk, stream_elevenlabs_audio_chunks
+from backend.elevenlabs_live import stream_elevenlabs_audio_chunks
 from backend.live_analysis import analyze_live_text_flow
 from backend.live_ingestion import TranscriptIngestionState, iter_transcript_file
 
@@ -216,13 +216,20 @@ class SessionStateManager:
                 self.ingestion_status = "waiting"
                 self.ingestion_error = "Waiting for browser audio before connecting to ElevenLabs."
 
-            audio_chunks = self._browser_audio_chunks()
-            first_chunk, replayable_chunks = await first_audio_chunk(
-                audio_chunks,
-                timeout_seconds=1.0,
-            )
-            if first_chunk is None:
+            first_chunk = None
+            try:
+                if self.audio_queue is not None:
+                    first_chunk = await asyncio.to_thread(self.audio_queue.get, True, 1.0)
+            except queue.Empty:
                 continue
+
+            if first_chunk is None:
+                break
+
+            async def audio_stream():
+                yield first_chunk
+                async for chunk in self._browser_audio_chunks():
+                    yield chunk
 
             with self.state_lock:
                 self.elevenlabs_connection_attempts += 1
@@ -230,7 +237,7 @@ class SessionStateManager:
 
             try:
                 await stream_elevenlabs_audio_chunks(
-                    replayable_chunks,
+                    audio_stream(),
                     ingestion_state,
                     should_stop=self.stop_event.is_set,
                     on_event=self._set_elevenlabs_event,

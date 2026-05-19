@@ -423,27 +423,7 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-def prepend_audio_chunk(first_chunk: bytes, audio_chunks):
-    async def generator():
-        yield first_chunk
-        async for chunk in audio_chunks:
-            yield chunk
 
-    return generator()
-
-
-async def first_audio_chunk(audio_chunks, *, timeout_seconds: float = 10.0) -> tuple[bytes | None, Any]:
-    deadline = asyncio.get_running_loop().time() + timeout_seconds
-    while True:
-        remaining = deadline - asyncio.get_running_loop().time()
-        if remaining <= 0:
-            return None, audio_chunks
-        try:
-            chunk = await asyncio.wait_for(anext(audio_chunks), timeout=remaining)
-        except (asyncio.TimeoutError, StopAsyncIteration):
-            return None, audio_chunks
-        if chunk:
-            return chunk, prepend_audio_chunk(chunk, audio_chunks)
 
 
 def _is_error_event(event: dict[str, Any]) -> bool:

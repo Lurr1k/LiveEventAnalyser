@@ -82,8 +82,9 @@ def render_browser_microphone(manager, *, enabled: bool):
             mode=WebRtcMode.SENDONLY,
             audio_frame_callback=audio_frame_callback,
             media_stream_constraints={"video": False, "audio": True},
-            rtc_configuration={"iceServers": []},
+            rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
             async_processing=True,
+            desired_playing_state=True,
         )
     except SignallingTimeoutError:
         st.warning(
