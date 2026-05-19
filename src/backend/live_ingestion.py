@@ -43,6 +43,7 @@ class TranscriptIngestionState:
     last_error: str | None = None
     _queue: asyncio.Queue[IngestedTranscriptChunk | None] = field(init=False, repr=False)
     _rolling_window: deque[IngestedTranscriptChunk] = field(default_factory=deque, repr=False)
+    _seen_chunks: set[tuple[str, str, str]] = field(default_factory=set, init=False, repr=False)
     _sequence: int = field(default=0, init=False, repr=False)
     _first_chunk_received_at: float | None = field(default=None, init=False, repr=False)
 
@@ -71,6 +72,13 @@ class TranscriptIngestionState:
         normalized = normalize_transcript_chunk(raw_chunk)
         if not normalized["text"]:
             return None
+        dedupe_key = (
+            normalized["timestamp"],
+            normalized["speaker"],
+            normalized["text"],
+        )
+        if dedupe_key in self._seen_chunks:
+            return None
 
         self._sequence += 1
         chunk = IngestedTranscriptChunk(
@@ -81,6 +89,7 @@ class TranscriptIngestionState:
             sequence=self._sequence,
         )
         self._append_to_window(chunk)
+        self._seen_chunks.add(dedupe_key)
         await self._queue.put(chunk)
         self.status = "receiving"
         return chunk
@@ -135,7 +144,8 @@ class TranscriptIngestionState:
         if self._first_chunk_received_at is None:
             self._first_chunk_received_at = chunk.received_at
         while len(self._rolling_window) > self.max_window_chunks:
-            self._rolling_window.popleft()
+            removed = self._rolling_window.popleft()
+            self._seen_chunks.discard((removed.timestamp, removed.speaker, removed.text))
 
 
 async def replay_transcript_file(

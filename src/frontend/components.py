@@ -1,3 +1,5 @@
+from html import escape
+
 import streamlit as st
 
 def render_sidebar(sessions, attendees, profile, is_running):
@@ -15,13 +17,23 @@ def render_sidebar(sessions, attendees, profile, is_running):
             format_func=lambda x: session_names[x],
             disabled=is_running
         )
+
+        source = st.selectbox(
+            "Transcript Source",
+            options=["elevenlabs_live", "demo_markdown"],
+            format_func=lambda value: {
+                "elevenlabs_live": "ElevenLabs live mic",
+                "demo_markdown": "Demo markdown replay",
+            }[value],
+            disabled=is_running,
+        )
         
         if is_running:
             if st.button("Stop Session", use_container_width=True):
-                return selected_id, "stop"
+                return selected_id, source, "stop"
         else:
             if st.button("Start Session", type="primary", use_container_width=True):
-                return selected_id, "start"
+                return selected_id, source, "start"
                 
         st.divider()
         
@@ -38,11 +50,14 @@ def render_sidebar(sessions, attendees, profile, is_running):
             for intent in profile.get("top_intents", []):
                 st.caption(f"- {intent}")
                 
-    return selected_id, "none"
+    return selected_id, source, "none"
 
-def render_transcript(chunks):
+def render_transcript(chunks, *, status="disconnected", error=None):
     """Render the rolling transcript feed at the bottom."""
     st.subheader("Live Transcript")
+    st.caption(f"Transcription status: {status}")
+    if error:
+        st.warning(error)
     
     if not chunks:
         st.info("Waiting for transcript...")
@@ -55,15 +70,10 @@ def render_transcript(chunks):
         distance_from_bottom = total - 1 - i
         alpha = max(0.2, 1.0 - (distance_from_bottom / 15.0) * 0.8)
         
-        formatted_chunk = chunk
-        if "]" in chunk and ":" in chunk:
-            try:
-                time_part, rest = chunk.split("]", 1)
-                speaker, text = rest.split(":", 1)
-                formatted_chunk = f"<strong>{time_part}]{speaker}:</strong> {text}"
-            except ValueError:
-                pass
-        
+        timestamp = escape(str(chunk.get("timestamp", "00:00:00")))
+        speaker = escape(str(chunk.get("speaker", "Speaker")))
+        text = escape(str(chunk.get("text", "")))
+        formatted_chunk = f"<strong>[{timestamp}] {speaker}:</strong> {text}"
         html_lines.append(f'<div style="opacity: {alpha:.2f}; margin-bottom: 0.5rem; line-height: 1.5;">{formatted_chunk}</div>')
 
     html_content = f"""

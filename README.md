@@ -39,8 +39,11 @@ The project prioritizes rapid development, powerful data science tooling, and a 
 
 * **Core Dashboard (Streamlit MVP):** The entire speaker HUD and core application are built using **Streamlit**. This integrates the user interface, backend logic, and data processing within a single Python codebase.
 * **Data Handling:** Leverages `pandas` to load, hold, and filter mock attendee Excel files and JSON session metadata in memory for rapid lookups.
-* **Transcript Ingestion:** A simulated live feed that pushes chunks of mock transcripts into the Streamlit session state, triggering the LLM analysis loop.
+* **Transcript Ingestion:** ElevenLabs realtime speech-to-text is the primary live source. Committed transcript segments are normalized and fed into the rolling analysis loop; mock markdown replay remains available as a demo fallback.
 * **AI & Logic Layer:** Utilizes fast, text-based LLM API calls. Chunks of the rolling transcript combined with the audience profile matrix are analyzed to output concise, actionable UI directives.
+
+### Live Transcription Setup
+Set `ELEVENLABS_API_KEY` before starting the Streamlit app, then choose **ElevenLabs live mic** in the sidebar. The backend captures the server/laptop microphone as 16 kHz mono PCM, streams it to ElevenLabs realtime STT, and sends only committed transcript segments to the model for on-stage analysis.
 
 ---
 
