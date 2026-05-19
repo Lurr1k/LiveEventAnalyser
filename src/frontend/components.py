@@ -5,6 +5,29 @@ import streamlit as st
 def render_sidebar(sessions, attendees, profile, is_running):
     """Render the sidebar with session selection and audience profile."""
     with st.sidebar:
+        # Remove empty space at the top of the sidebar
+        st.markdown(
+            """
+            <style>
+                [data-testid="stSidebarHeader"] {
+                    height: 0px !important;
+                    min-height: 0px !important;
+                    margin-bottom: 0px !important;
+                    padding: 0px !important;
+                    overflow: visible !important;
+                }
+                [data-testid="stSidebarUserContent"] {
+                    padding-top: 15px !important;
+                }
+                [data-testid="stSidebarUserContent"] h1,
+                [data-testid="stSidebarUserContent"] .stHeading h1 {
+                    padding-top: 0px !important;
+                    margin-top: 0px !important;
+                }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
         st.title("Event Controls")
         
         source = st.selectbox(
