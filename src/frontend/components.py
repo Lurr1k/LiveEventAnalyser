@@ -51,18 +51,24 @@ def render_transcript(chunks):
         if not chunks:
             st.info("Waiting for transcript...")
         else:
-            # Render chunks
-            for chunk in chunks:
-                # Basic parsing to bold the speaker name if it matches standard format "[time] Speaker: text"
+            # Render chunks in reverse order (newest at top) to avoid scrolling issues
+            total = len(chunks)
+            for i, chunk in enumerate(reversed(chunks)):
+                # Calculate fading opacity (1.0 for newest, down to 0.3 for oldest)
+                alpha = 1.0 - (0.7 * (i / max(1, total - 1)))
+                
+                # Basic parsing to bold the speaker name
+                formatted_chunk = chunk
                 if "]" in chunk and ":" in chunk:
                     try:
                         time_part, rest = chunk.split("]", 1)
                         speaker, text = rest.split(":", 1)
-                        st.markdown(f"**{time_part}]{speaker}:** {text}")
+                        formatted_chunk = f"**{time_part}]{speaker}:** {text}"
                     except ValueError:
-                        st.markdown(chunk)
-                else:
-                    st.markdown(chunk)
+                        pass
+                
+                # Apply opacity using HTML span
+                st.markdown(f'<span style="opacity: {alpha:.2f}; display: block; margin-bottom: 0.5rem;">{formatted_chunk}</span>', unsafe_allow_html=True)
 
 def render_action_zone(command):
     """Render the action zone at the bottom, prioritizing LLM commands."""
