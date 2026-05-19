@@ -9,6 +9,9 @@ def render_sidebar(sessions, attendees, profile, is_running):
         st.markdown(
             """
             <style>
+                [data-testid="stSidebar"] {
+                    overflow: hidden !important;
+                }
                 [data-testid="stSidebarHeader"] {
                     height: 0px !important;
                     min-height: 0px !important;
@@ -18,6 +21,7 @@ def render_sidebar(sessions, attendees, profile, is_running):
                 }
                 [data-testid="stSidebarUserContent"] {
                     padding-top: 15px !important;
+                    overflow: hidden !important;
                 }
                 [data-testid="stSidebarUserContent"] h1,
                 [data-testid="stSidebarUserContent"] .stHeading h1 {
