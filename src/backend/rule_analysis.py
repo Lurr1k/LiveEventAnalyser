@@ -31,7 +31,7 @@ def neutral_command() -> UICommand:
     return UICommand(
         type="neutral",
         priority="low",
-        headline="Keep listening",
+        headline="Continue",
         detail="No model analysis is available for this time window.",
         related_topic=None,
     )

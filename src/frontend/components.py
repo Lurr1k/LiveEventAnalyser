@@ -51,8 +51,9 @@ def render_transcript(chunks):
     html_lines = []
     total = len(chunks)
     for i, chunk in enumerate(chunks):
-        # Calculate fading opacity (0.3 for oldest, 1.0 for newest)
-        alpha = 0.3 + (0.7 * (i / max(1, total - 1))) if total > 1 else 1.0
+        # Base fading on distance from the bottom (newest is always 1.0, older chunks fade out)
+        distance_from_bottom = total - 1 - i
+        alpha = max(0.2, 1.0 - (distance_from_bottom / 15.0) * 0.8)
         
         formatted_chunk = chunk
         if "]" in chunk and ":" in chunk:
@@ -70,6 +71,10 @@ def render_transcript(chunks):
     <html>
     <head>
     <style>
+    /* Hide scrollbar for Chrome, Safari and Opera */
+    ::-webkit-scrollbar {{
+        display: none;
+    }}
     body {{
         margin: 0;
         padding: 0 10px 10px 0;
@@ -77,6 +82,9 @@ def render_transcript(chunks):
         color: rgb(250, 250, 250);
         font-family: "Source Sans Pro", sans-serif;
         font-size: 16px;
+        /* Hide scrollbar for IE, Edge and Firefox */
+        -ms-overflow-style: none;  
+        scrollbar-width: none;  
     }}
     </style>
     </head>
