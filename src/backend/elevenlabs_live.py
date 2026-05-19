@@ -33,7 +33,7 @@ class ElevenLabsRealtimeConfig:
     min_silence_duration_ms: int = 100
 
 
-def convert_elevenlabs_event(event: dict[str, Any]) -> list[dict[str, str]]:
+def convert_elevenlabs_event(event: dict[str, Any], expect_timestamps: bool = True) -> list[dict[str, str]]:
     """Convert stable ElevenLabs transcript events into app transcript chunks."""
     message_type = str(event.get("message_type") or "")
     if message_type == "partial_transcript":
@@ -41,6 +41,8 @@ def convert_elevenlabs_event(event: dict[str, Any]) -> list[dict[str, str]]:
     if message_type == "committed_transcript_with_timestamps":
         return _convert_timestamped_event(event)
     if message_type == "committed_transcript":
+        if expect_timestamps:
+            return []
         text = str(event.get("text") or "").strip()
         if not text:
             return []
@@ -167,6 +169,7 @@ async def _run_realtime_websocket(
                 _receive_transcripts(
                     websocket,
                     ingestion_state,
+                    config,
                     on_event=on_event,
                     on_error_event=on_error_event,
                 )
@@ -215,6 +218,7 @@ async def _send_audio(
 async def _receive_transcripts(
     websocket: Any,
     ingestion_state: TranscriptIngestionState,
+    config: ElevenLabsRealtimeConfig,
     *,
     on_event: Callable[[str], None] | None = None,
     on_error_event: Callable[[str], None] | None = None,
@@ -229,7 +233,7 @@ async def _receive_transcripts(
             if on_error_event is not None:
                 on_error_event(message)
             raise RuntimeError(message)
-        for chunk in convert_elevenlabs_event(event):
+        for chunk in convert_elevenlabs_event(event, expect_timestamps=config.include_timestamps):
             await ingestion_state.push(chunk)
 
 
