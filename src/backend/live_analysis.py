@@ -23,22 +23,26 @@ DEFAULT_MODEL = "gpt-5.4-mini"
 
 SYSTEM_PROMPT = """You are the live analysis engine for a real-time speaker HUD.
 
-Analyze only the supplied rolling transcript, transcript window metadata, session metadata, agenda, audience profile, and FOMO context.
-Do not invent facts, names, audience traits, or claims that are not present in the input.
+Analyze the supplied rolling transcript, session metadata, agenda, audience profile, FOMO context, and the currently displayed UI command (previous_command).
+DO NOT summarize the transcript. Your sole purpose is to provide ACTIONABLE, real-time coaching to the speakers on stage.
 
-Return exactly one UI command as JSON. The command must help a speaker or moderator act now.
-Use "neutral" when no useful action is needed.
+Return exactly one UI command as JSON. 
 
-Rules:
+Behavioral Directives:
+1. Topic Stagnation & Pacing: If speakers dwell on a single topic for too long, are looping, or falling behind schedule, suggest moving to the next agenda item. (Type: fatigue)
+2. Conceptual Friction & Clarity: If speakers discuss highly complex topics or jargon without explanation, suggest elaborating or providing bullet points of prerequisite concepts so the audience can follow. (Type: coaching)
+3. Engagement Drop-Off & Gamification: If the discussion becomes mundane or dry, suggest targeted questions to throw to the room or interactive prompts to gamify the experience. (Type: coaching)
+4. FOMO: Create a concise, shareable insight for absent attendees based on the transcript. (Type: fomo)
+
+State-Awareness Rules:
+- If everything is proceeding smoothly and no new advice is needed, output a "neutral" command.
+- Review the `previous_command`. If the speakers have NOT addressed the previous advice and it remains highly relevant, re-issue that advice. You may escalate its priority (e.g., low -> medium -> high).
+- If the speakers have successfully addressed the previous advice, output "neutral" to clear the screen.
+
+JSON Formatting Rules:
 - headline must be 3-7 words.
-- detail must be one short sentence.
-- priority should be high only for urgent clarity, fatigue, or strong FOMO moments.
-- coaching means audience-aware clarity or engagement advice.
-- fatigue means the current discussion appears to be lingering, looping, or blocking agenda progress based on the transcript window and agenda context.
-- for fatigue, prefer next_agenda_item when it exists.
-- fomo means a concise shareable insight for absent or adjacent-interest attendees based on the current transcript window and audience intent context.
-- for fomo, write detail as a short notification-style snippet grounded in the transcript.
-- neutral means keep listening.
+- detail must be one short, actionable sentence.
+- priority: "low", "medium", or "high" (use high for urgent clarity/pacing issues).
 """
 
 UI_COMMAND_SCHEMA: dict[str, Any] = {
@@ -138,6 +142,7 @@ def build_llm_payload(
     session_context: dict[str, Any],
     audience_profile: dict[str, Any],
     fallback: UICommand,
+    previous_command: UICommand | None,
     *,
     analysis_interval_seconds: float = 5.0,
 ) -> dict[str, Any]:
@@ -169,6 +174,7 @@ def build_llm_payload(
         "audience_profile": audience_profile,
         "fomo_context": fomo_context,
         "transcript_window": transcript_window,
+        "previous_command": asdict(previous_command) if previous_command else None,
         "analysis_context": {
             "analysis_interval_seconds": analysis_interval_seconds,
             "fatigue_decision_owner": "model",
@@ -184,6 +190,7 @@ async def analyze_with_gpt54_mini(
     session_context: dict[str, Any],
     audience_profile: dict[str, Any],
     *,
+    previous_command: UICommand | None = None,
     client: Any | None = None,
     model: str = DEFAULT_MODEL,
     timeout_seconds: float = 8.0,
@@ -212,6 +219,7 @@ async def analyze_with_gpt54_mini(
         session_context,
         audience_profile,
         fallback,
+        previous_command,
         analysis_interval_seconds=analysis_interval_seconds,
     )
 
@@ -258,6 +266,7 @@ async def analyze_live_text_flow(
     received_count = 0
     analyzed_count = 0
     producer_errors: list[BaseException] = []
+    last_issued_command: UICommand | None = None
 
     async def collect_chunks() -> None:
         try:
@@ -278,10 +287,11 @@ async def analyze_live_text_flow(
                 raw_chunk = await asyncio.wait_for(chunk_queue.get(), timeout=timeout)
             except asyncio.TimeoutError:
                 if rolling.chunks and received_count > analyzed_count:
-                    yield await analyze_with_gpt54_mini(
+                    command = await analyze_with_gpt54_mini(
                         rolling,
                         session_context,
                         audience_profile,
+                        previous_command=last_issued_command,
                         client=client,
                         model=model,
                         use_llm=use_llm,
@@ -289,6 +299,11 @@ async def analyze_live_text_flow(
                         on_error=on_analysis_error,
                         on_success=on_analysis_success,
                     )
+                    if command.type != "neutral":
+                        last_issued_command = command
+                    else:
+                        last_issued_command = None
+                    yield command
                     analyzed_count = received_count
                 next_analysis_at = time.monotonic() + interval
                 continue
@@ -305,10 +320,11 @@ async def analyze_live_text_flow(
             received_count += 1
 
         if rolling.chunks and received_count > analyzed_count:
-            yield await analyze_with_gpt54_mini(
+            command = await analyze_with_gpt54_mini(
                 rolling,
                 session_context,
                 audience_profile,
+                previous_command=last_issued_command,
                 client=client,
                 model=model,
                 use_llm=use_llm,
@@ -316,6 +332,11 @@ async def analyze_live_text_flow(
                 on_error=on_analysis_error,
                 on_success=on_analysis_success,
             )
+            if command.type != "neutral":
+                last_issued_command = command
+            else:
+                last_issued_command = None
+            yield command
         if producer_errors:
             raise producer_errors[0]
     finally:
