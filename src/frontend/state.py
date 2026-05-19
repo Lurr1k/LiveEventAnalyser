@@ -6,7 +6,7 @@ import threading
 import time
 from typing import Any, Literal
 
-from backend.elevenlabs_live import stream_elevenlabs_audio_chunks
+from backend.elevenlabs_live import first_audio_chunk, stream_elevenlabs_audio_chunks
 from backend.live_analysis import analyze_live_text_flow
 from backend.live_ingestion import TranscriptIngestionState, iter_transcript_file
 
@@ -38,6 +38,12 @@ class SessionStateManager:
         self.analysis_error = None
         self.last_model_response_at: float | None = None
         self.audio_chunk_count = 0
+        self.last_audio_chunk_at: float | None = None
+        self.elevenlabs_connected = False
+        self.last_elevenlabs_event_type: str | None = None
+        self.last_elevenlabs_event_at: float | None = None
+        self.elevenlabs_close_error: str | None = None
+        self.elevenlabs_connection_attempts = 0
         self.audio_queue: queue.Queue[bytes | None] | None = None
 
     def start(
@@ -62,6 +68,12 @@ class SessionStateManager:
         self.analysis_error = None
         self.last_model_response_at = None
         self.audio_chunk_count = 0
+        self.last_audio_chunk_at = None
+        self.elevenlabs_connected = False
+        self.last_elevenlabs_event_type = None
+        self.last_elevenlabs_event_at = None
+        self.elevenlabs_close_error = None
+        self.elevenlabs_connection_attempts = 0
         self.audio_queue = queue.Queue(maxsize=128)
 
         self.thread = threading.Thread(
@@ -82,6 +94,7 @@ class SessionStateManager:
         with self.state_lock:
             self.is_running = False
             self.ingestion_status = "disconnected"
+            self.elevenlabs_connected = False
 
     def get_state(self):
         with self.state_lock:
@@ -97,6 +110,12 @@ class SessionStateManager:
                 "analysis_error": self.analysis_error,
                 "last_model_response_at": self.last_model_response_at,
                 "audio_chunk_count": self.audio_chunk_count,
+                "last_audio_chunk_at": self.last_audio_chunk_at,
+                "elevenlabs_connected": self.elevenlabs_connected,
+                "last_elevenlabs_event_type": self.last_elevenlabs_event_type,
+                "last_elevenlabs_event_at": self.last_elevenlabs_event_at,
+                "elevenlabs_close_error": self.elevenlabs_close_error,
+                "elevenlabs_connection_attempts": self.elevenlabs_connection_attempts,
             }
 
     def submit_audio_chunk(self, chunk: bytes) -> None:
@@ -116,6 +135,7 @@ class SessionStateManager:
             return
         with self.state_lock:
             self.audio_chunk_count += 1
+            self.last_audio_chunk_at = time.time()
 
     def _run_async_loop(
         self,
@@ -191,11 +211,38 @@ class SessionStateManager:
                 ingestion_state.disconnect()
             return
 
-        await stream_elevenlabs_audio_chunks(
-            self._browser_audio_chunks(),
-            ingestion_state,
-            should_stop=self.stop_event.is_set,
-        )
+        while not self.stop_event.is_set():
+            with self.state_lock:
+                self.ingestion_status = "waiting"
+                self.ingestion_error = "Waiting for browser audio before connecting to ElevenLabs."
+
+            audio_chunks = self._browser_audio_chunks()
+            first_chunk, replayable_chunks = await first_audio_chunk(
+                audio_chunks,
+                timeout_seconds=1.0,
+            )
+            if first_chunk is None:
+                continue
+
+            with self.state_lock:
+                self.elevenlabs_connection_attempts += 1
+                self.ingestion_error = None
+
+            try:
+                await stream_elevenlabs_audio_chunks(
+                    replayable_chunks,
+                    ingestion_state,
+                    should_stop=self.stop_event.is_set,
+                    on_event=self._set_elevenlabs_event,
+                    on_close=self._set_elevenlabs_close,
+                    on_error_event=self._set_elevenlabs_close,
+                    manage_ingestion_lifecycle=False,
+                )
+            except Exception as exc:
+                if self.stop_event.is_set():
+                    break
+                self._set_elevenlabs_close(str(exc))
+                await asyncio.sleep(1.0)
 
     async def _publish_ingestion_state(self, ingestion_state: TranscriptIngestionState) -> None:
         while not self.stop_event.is_set():
@@ -245,3 +292,16 @@ class SessionStateManager:
             self.analysis_status = "model"
             self.analysis_error = None
             self.last_model_response_at = time.time()
+
+    def _set_elevenlabs_event(self, message_type: str) -> None:
+        with self.state_lock:
+            self.last_elevenlabs_event_type = message_type
+            self.last_elevenlabs_event_at = time.time()
+            self.elevenlabs_close_error = None
+            if message_type == "session_started":
+                self.elevenlabs_connected = True
+
+    def _set_elevenlabs_close(self, message: str) -> None:
+        with self.state_lock:
+            self.elevenlabs_close_error = message
+            self.elevenlabs_connected = False

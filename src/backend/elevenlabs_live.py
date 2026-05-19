@@ -56,6 +56,10 @@ async def stream_elevenlabs_microphone(
     *,
     config: ElevenLabsRealtimeConfig | None = None,
     should_stop: Callable[[], bool] | None = None,
+    on_event: Callable[[str], None] | None = None,
+    on_close: Callable[[str], None] | None = None,
+    on_error_event: Callable[[str], None] | None = None,
+    manage_ingestion_lifecycle: bool = True,
 ) -> None:
     """Capture the server microphone and push committed ElevenLabs transcripts."""
     config = config or config_from_env()
@@ -75,6 +79,9 @@ async def stream_elevenlabs_microphone(
                 config=config,
                 api_key=api_key,
                 should_stop=stop_requested,
+                on_event=on_event,
+                on_close=on_close,
+                on_error_event=on_error_event,
             )
     except Exception as exc:
         ingestion_state.status = "disconnected"
@@ -100,6 +107,10 @@ async def stream_elevenlabs_audio_chunks(
     config: ElevenLabsRealtimeConfig | None = None,
     api_key: str | None = None,
     should_stop: Callable[[], bool] | None = None,
+    on_event: Callable[[str], None] | None = None,
+    on_close: Callable[[str], None] | None = None,
+    on_error_event: Callable[[str], None] | None = None,
+    manage_ingestion_lifecycle: bool = True,
 ) -> None:
     """Stream caller-provided 16 kHz mono PCM chunks to ElevenLabs."""
     config = config or config_from_env()
@@ -107,7 +118,8 @@ async def stream_elevenlabs_audio_chunks(
     if not api_key:
         raise RuntimeError("ELEVENLABS_API_KEY is required for live transcription.")
 
-    ingestion_state.connect()
+    if manage_ingestion_lifecycle:
+        ingestion_state.connect()
     stop_requested = should_stop or (lambda: False)
     try:
         await _run_realtime_websocket(
@@ -116,13 +128,18 @@ async def stream_elevenlabs_audio_chunks(
             config,
             api_key,
             stop_requested,
+            on_event,
+            on_close,
+            on_error_event,
         )
     except Exception as exc:
-        ingestion_state.status = "disconnected"
+        if manage_ingestion_lifecycle:
+            ingestion_state.status = "disconnected"
         ingestion_state.last_error = str(exc)
         raise
     finally:
-        ingestion_state.disconnect()
+        if manage_ingestion_lifecycle:
+            ingestion_state.disconnect()
 
 
 async def _run_realtime_websocket(
@@ -131,6 +148,9 @@ async def _run_realtime_websocket(
     config: ElevenLabsRealtimeConfig,
     api_key: str,
     should_stop: Callable[[], bool],
+    on_event: Callable[[str], None] | None = None,
+    on_close: Callable[[str], None] | None = None,
+    on_error_event: Callable[[str], None] | None = None,
 ) -> None:
     try:
         import websockets
@@ -140,17 +160,35 @@ async def _run_realtime_websocket(
         ) from exc
 
     uri = _build_realtime_uri(config)
-    async with _connect_websocket(websockets, uri, api_key) as websocket:
-        sender = asyncio.create_task(_send_audio(websocket, audio_chunks, config, should_stop))
-        receiver = asyncio.create_task(_receive_transcripts(websocket, ingestion_state))
-        done, pending = await asyncio.wait(
-            {sender, receiver},
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        for task in pending:
-            task.cancel()
-        for task in done:
-            task.result()
+    try:
+        async with _connect_websocket(websockets, uri, api_key) as websocket:
+            sender = asyncio.create_task(_send_audio(websocket, audio_chunks, config, should_stop))
+            receiver = asyncio.create_task(
+                _receive_transcripts(
+                    websocket,
+                    ingestion_state,
+                    on_event=on_event,
+                    on_error_event=on_error_event,
+                )
+            )
+            try:
+                while not should_stop():
+                    if receiver.done():
+                        receiver.result()
+                        raise RuntimeError("ElevenLabs websocket closed before recording was stopped.")
+                    if sender.done():
+                        sender.result()
+                        raise RuntimeError("Audio stream ended before recording was stopped.")
+                    await asyncio.sleep(0.2)
+            finally:
+                sender.cancel()
+                receiver.cancel()
+                await asyncio.gather(sender, receiver, return_exceptions=True)
+    except Exception as exc:
+        close_message = _close_message(exc)
+        if close_message and on_close is not None:
+            on_close(close_message)
+        raise
 
 
 async def _send_audio(
@@ -177,9 +215,20 @@ async def _send_audio(
 async def _receive_transcripts(
     websocket: Any,
     ingestion_state: TranscriptIngestionState,
+    *,
+    on_event: Callable[[str], None] | None = None,
+    on_error_event: Callable[[str], None] | None = None,
 ) -> None:
     async for raw_message in websocket:
         event = json.loads(raw_message)
+        message_type = str(event.get("message_type") or "unknown")
+        if on_event is not None:
+            on_event(message_type)
+        if _is_error_event(event):
+            message = _event_error_message(event)
+            if on_error_event is not None:
+                on_error_event(message)
+            raise RuntimeError(message)
         for chunk in convert_elevenlabs_event(event):
             await ingestion_state.push(chunk)
 
@@ -372,3 +421,46 @@ def _env_int(name: str, default: int) -> int:
         return int(os.getenv(name, str(default)))
     except ValueError:
         return default
+
+
+def prepend_audio_chunk(first_chunk: bytes, audio_chunks):
+    async def generator():
+        yield first_chunk
+        async for chunk in audio_chunks:
+            yield chunk
+
+    return generator()
+
+
+async def first_audio_chunk(audio_chunks, *, timeout_seconds: float = 10.0) -> tuple[bytes | None, Any]:
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    while True:
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            return None, audio_chunks
+        try:
+            chunk = await asyncio.wait_for(anext(audio_chunks), timeout=remaining)
+        except (asyncio.TimeoutError, StopAsyncIteration):
+            return None, audio_chunks
+        if chunk:
+            return chunk, prepend_audio_chunk(chunk, audio_chunks)
+
+
+def _is_error_event(event: dict[str, Any]) -> bool:
+    message_type = str(event.get("message_type") or "").lower()
+    return message_type == "error" or "error" in message_type
+
+
+def _event_error_message(event: dict[str, Any]) -> str:
+    message = event.get("message") or event.get("error") or event.get("detail") or event
+    return f"ElevenLabs transcription error: {message}"
+
+
+def _close_message(exc: BaseException) -> str | None:
+    code = getattr(exc, "code", None)
+    reason = getattr(exc, "reason", None)
+    if code is None and reason is None:
+        return None
+    if reason:
+        return f"ElevenLabs websocket closed with code {code}: {reason}"
+    return f"ElevenLabs websocket closed with code {code}"
