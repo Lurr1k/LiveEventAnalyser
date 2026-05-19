@@ -25,7 +25,8 @@ def main():
     st.set_page_config(
         page_title="Live Event Analyser HUD",
         page_icon="🎙️",
-        layout="wide"
+        layout="wide",
+        initial_sidebar_state="collapsed"
     )
     
     init_app_state()
