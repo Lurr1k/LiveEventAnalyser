@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, AsyncIterator, Literal
 
-from data_loading import normalize_transcript_chunk
+from .data_loading import normalize_transcript_chunk
 
 
 ConnectionStatus = Literal["disconnected", "waiting", "receiving"]

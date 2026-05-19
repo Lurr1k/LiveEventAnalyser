@@ -9,13 +9,13 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, AsyncIterator, Iterable
 
-from audience import build_audience_profile as build_session_audience_profile
-from data_loading import (
+from .audience import build_audience_profile as build_session_audience_profile
+from .data_loading import (
     load_attendees as load_attendees_dataframe,
     load_sessions as load_session_metadata,
     normalize_transcript_chunk as normalize_raw_transcript_chunk,
 )
-from rule_analysis import UICommand, analyze_rules
+from .rule_analysis import UICommand, analyze_rules
 
 
 DEFAULT_MODEL = "gpt-5.4-mini"

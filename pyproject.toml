@@ -12,12 +12,5 @@ dependencies = [
 requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-py-modules = [
-    "main",
-    "audience",
-    "data_loading",
-    "live_analysis",
-    "live_ingestion",
-    "rule_analysis",
-]
+[tool.setuptools.packages.find]
+where = ["src"]
