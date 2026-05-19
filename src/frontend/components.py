@@ -44,47 +44,53 @@ def render_transcript(chunks):
     """Render the rolling transcript feed at the top."""
     st.subheader("Live Transcript Feed")
     
-    # Use a container with a fixed height and scrollbar for the transcript
-    feed_container = st.container(height=300)
-    
-    with feed_container:
-        if not chunks:
-            st.info("Waiting for transcript...")
-        else:
-            # Render chunks in normal order (newest at bottom)
-            total = len(chunks)
-            for i, chunk in enumerate(chunks):
-                # Calculate fading opacity (0.3 for oldest (i=0), 1.0 for newest (i=total-1))
-                alpha = 0.3 + (0.7 * (i / max(1, total - 1))) if total > 1 else 1.0
-                
-                # Basic parsing to bold the speaker name
-                formatted_chunk = chunk
-                if "]" in chunk and ":" in chunk:
-                    try:
-                        time_part, rest = chunk.split("]", 1)
-                        speaker, text = rest.split(":", 1)
-                        formatted_chunk = f"**{time_part}]{speaker}:** {text}"
-                    except ValueError:
-                        pass
-                
-                # Apply opacity using HTML span
-                st.markdown(f'<span style="opacity: {alpha:.2f}; display: block; margin-bottom: 0.5rem;">{formatted_chunk}</span>', unsafe_allow_html=True)
+    if not chunks:
+        st.info("Waiting for transcript...")
+        return
 
-            # Inject JS to scroll the container to the bottom
-            import streamlit.components.v1 as components
-            components.html(
-                """
-                <script>
-                const parent = window.parent.document;
-                const scrollableContainers = parent.querySelectorAll('[data-testid="stScrollableContainer"]');
-                if (scrollableContainers.length > 0) {
-                    const target = scrollableContainers[0];
-                    target.scrollTop = target.scrollHeight;
-                }
-                </script>
-                """,
-                height=0,
-            )
+    html_lines = []
+    total = len(chunks)
+    for i, chunk in enumerate(chunks):
+        # Calculate fading opacity (0.3 for oldest, 1.0 for newest)
+        alpha = 0.3 + (0.7 * (i / max(1, total - 1))) if total > 1 else 1.0
+        
+        formatted_chunk = chunk
+        if "]" in chunk and ":" in chunk:
+            try:
+                time_part, rest = chunk.split("]", 1)
+                speaker, text = rest.split(":", 1)
+                formatted_chunk = f"<strong>{time_part}]{speaker}:</strong> {text}"
+            except ValueError:
+                pass
+        
+        html_lines.append(f'<div style="opacity: {alpha:.2f}; margin-bottom: 0.5rem; line-height: 1.5;">{formatted_chunk}</div>')
+
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+    <style>
+    body {{
+        margin: 0;
+        padding: 0 10px 10px 0;
+        background-color: #0E1117;
+        color: rgb(250, 250, 250);
+        font-family: "Source Sans Pro", sans-serif;
+        font-size: 16px;
+    }}
+    </style>
+    </head>
+    <body>
+        {''.join(html_lines)}
+    <script>
+        window.scrollTo(0, document.body.scrollHeight);
+    </script>
+    </body>
+    </html>
+    """
+    
+    import streamlit.components.v1 as components
+    components.html(html_content, height=300, scrolling=True)
 
 def render_action_zone(command):
     """Render the action zone at the bottom, prioritizing LLM commands."""

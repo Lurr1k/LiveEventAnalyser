@@ -69,7 +69,7 @@ class SessionStateManager:
     async def _async_pipeline(self, session: dict[str, Any], profile: dict[str, Any]):
         # Custom generator to add chunks to state and check stop_event
         async def stream():
-            async for raw_chunk in iter_transcript_file(session["path"], delay_seconds=1.0):
+            async for raw_chunk in iter_transcript_file(session["path"], delay_seconds=2.0):
                 if self.stop_event.is_set():
                     break
                 with self.state_lock:
