@@ -41,8 +41,8 @@ def render_sidebar(sessions, attendees, profile, is_running):
     return selected_id, "none"
 
 def render_transcript(chunks):
-    """Render the rolling transcript feed at the top."""
-    st.subheader("Live Transcript Feed")
+    """Render the rolling transcript feed at the bottom."""
+    st.subheader("Live Transcript")
     
     if not chunks:
         st.info("Waiting for transcript...")
@@ -93,29 +93,36 @@ def render_transcript(chunks):
     components.html(html_content, height=300, scrolling=True)
 
 def render_action_zone(command):
-    """Render the action zone at the bottom, prioritizing LLM commands."""
-    st.divider()
-    st.subheader("Action Zone")
-    
+    """Render the action zone, centered with large font and priority colors."""
     if not command:
-        st.info("Waiting for analysis...")
+        st.markdown(
+            '<div style="text-align: center; padding: 3rem; color: #888;"><h3>Waiting for analysis...</h3></div>', 
+            unsafe_allow_html=True
+        )
         return
         
-    # Pick colors based on priority
-    # Using Streamlit info/warning/error/success boxes as a vanilla starting point
+    # Pick colors based on priority to mimic Streamlit's native alerts
     if command.priority == "high":
-        box = st.error
+        bg_color = "rgba(255, 75, 75, 0.15)"
+        border_color = "rgb(255, 75, 75)"
     elif command.priority == "medium":
-        box = st.warning
+        bg_color = "rgba(255, 193, 7, 0.15)"
+        border_color = "rgb(255, 193, 7)"
     else:
         # For neutral or low priority coaching
         if command.type == "neutral":
-            box = st.info
+            bg_color = "rgba(43, 123, 255, 0.15)"
+            border_color = "rgb(43, 123, 255)"
         else:
-            box = st.success
+            bg_color = "rgba(9, 171, 59, 0.15)"
+            border_color = "rgb(9, 171, 59)"
             
-    body = f"### {command.headline}\n\n{command.detail}"
-    if command.related_topic:
-        body += f"\n\n*Related Topic:* {command.related_topic}"
-        
-    box(body, icon=None)
+    html = f"""
+    <div style="background-color: {bg_color}; border: 2px solid {border_color}; border-radius: 1rem; padding: 3rem 2rem; text-align: center; margin: 1rem 0 3rem 0; box-shadow: 0 4px 20px rgba(0,0,0,0.2);">
+        <h1 style="margin-top: 0; margin-bottom: 1rem; font-size: 3.5rem; line-height: 1.2;">{command.headline}</h1>
+        <p style="font-size: 1.5rem; color: #E0E0E0; margin-bottom: 0;">{command.detail}</p>
+        {f'<p style="font-size: 1rem; color: #999; margin-top: 1rem;"><em>Related Topic: {command.related_topic}</em></p>' if command.related_topic else ''}
+    </div>
+    """
+    
+    st.markdown(html, unsafe_allow_html=True)

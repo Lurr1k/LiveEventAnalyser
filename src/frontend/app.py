@@ -67,13 +67,11 @@ def main():
         st.rerun()
         
     # Main Layout
-    st.title("Speaker HUD")
-    
     if backend_state["error"]:
         st.error(f"Backend Error: {backend_state['error']}")
         
-    render_transcript(backend_state["transcript_chunks"])
     render_action_zone(backend_state["latest_command"])
+    render_transcript(backend_state["transcript_chunks"])
     
     # Auto-refresh loop if the backend is running
     if is_running:
