@@ -33,11 +33,11 @@ def audience_profile():
     }
 
 def test_rolling_transcript():
-    \"\"\"
+    """
     Test the `RollingTranscript` data structure.
     Ensures that when new transcript chunks are appended, the max_chunks
     limit is respected and old chunks are correctly evicted.
-    \"\"\"
+    """
     rolling = RollingTranscript(max_chunks=2)
     
     chunk1 = TranscriptChunk(timestamp="00:00:01", speaker="Alice", text="Hello")
@@ -55,11 +55,11 @@ def test_rolling_transcript():
     assert rolling.chunks[1].text == "How are you?"
 
 def test_rule_based_analyze(session_context, audience_profile):
-    \"\"\"
+    """
     Test the synchronous fallback analysis logic.
     Verifies that when `rule_based_analyze` is called, it correctly returns
     a `UICommand` in a neutral state, ensuring UI stability without an LLM.
-    \"\"\"
+    """
     rolling = RollingTranscript(max_chunks=5)
     rolling.append(TranscriptChunk(timestamp="00:00:01", speaker="Alice", text="Hello world!"))
     
@@ -72,12 +72,12 @@ def test_rule_based_analyze(session_context, audience_profile):
 
 @pytest.mark.asyncio
 async def test_analyze_live_text_flow_neutral_fallback(session_context, audience_profile):
-    \"\"\"
+    """
     Test the end-to-end async text flow pipeline.
     This simulates an asynchronous stream of live audio transcript chunks,
     feeds it into `analyze_live_text_flow` (with LLM disabled), and verifies
     that it yields neutral fallback commands correctly over time.
-    \"\"\"
+    """
     # Create an async generator for mock live chunks
     async def mock_chunks():
         yield {"timestamp": "00:00:01", "speaker": "Alice", "text": "This is the first sentence."}
