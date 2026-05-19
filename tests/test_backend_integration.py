@@ -55,7 +55,7 @@ async def test_end_to_end_data_integration():
         analysis_interval_seconds=0.01,  # Fast interval to quickly yield commands
     ):
         assert command.type == "neutral"
-        assert command.headline == "Keep listening"
+        assert command.headline == "Continue"
         commands_received += 1
     
     assert commands_received > 0, "Expected at least one UICommand to be generated"

@@ -43,7 +43,7 @@ The project prioritizes rapid development, powerful data science tooling, and a 
 * **AI & Logic Layer:** Utilizes fast, text-based LLM API calls. Chunks of the rolling transcript combined with the audience profile matrix are analyzed to output concise, actionable UI directives.
 
 ### Live Transcription Setup
-Set `ELEVENLABS_API_KEY` before starting the Streamlit app, then choose **ElevenLabs live mic** in the sidebar. The backend captures the server/laptop microphone as 16 kHz mono PCM, streams it to ElevenLabs realtime STT, and sends only committed transcript segments to the model for on-stage analysis.
+Set `ELEVENLABS_API_KEY` before starting the Streamlit app, then choose **Browser mic** in the sidebar. Streamlit asks the browser for microphone permission, forwards 16 kHz mono PCM audio to the backend, streams it to ElevenLabs realtime STT, and sends only committed transcript segments to the model for on-stage analysis.
 
 ---
 

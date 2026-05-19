@@ -1,6 +1,10 @@
 import pytest
 
-from backend.elevenlabs_live import convert_elevenlabs_event
+from backend.elevenlabs_live import (
+    ElevenLabsRealtimeConfig,
+    _send_audio,
+    convert_elevenlabs_event,
+)
 from backend.live_ingestion import TranscriptIngestionState
 
 
@@ -68,3 +72,30 @@ async def test_ingestion_dedupes_repeated_committed_chunks():
     assert first is not None
     assert second is None
     assert state.rolling_window() == [chunk]
+
+
+@pytest.mark.asyncio
+async def test_send_audio_streams_browser_pcm_chunks():
+    class FakeWebSocket:
+        def __init__(self):
+            self.messages = []
+
+        async def send(self, message):
+            self.messages.append(message)
+
+    async def chunks():
+        yield b"\x01\x02"
+        yield b""
+        yield b"\x03\x04"
+
+    websocket = FakeWebSocket()
+
+    await _send_audio(
+        websocket,
+        chunks(),
+        ElevenLabsRealtimeConfig(sample_rate=16000),
+        should_stop=lambda: False,
+    )
+
+    assert len(websocket.messages) == 2
+    assert all('"message_type": "input_audio_chunk"' in message for message in websocket.messages)

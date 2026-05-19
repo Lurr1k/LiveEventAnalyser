@@ -16,7 +16,13 @@ except ImportError:
 from backend.data_loading import discover_data_paths, load_attendees, load_sessions
 from backend.audience import get_audience_profile
 from frontend.state import SessionStateManager
-from frontend.components import render_sidebar, render_transcript, render_action_zone
+from frontend.components import (
+    render_analysis_status,
+    render_browser_microphone,
+    render_sidebar,
+    render_transcript,
+    render_action_zone,
+)
 
 def init_app_state():
     if "paths" not in st.session_state:
@@ -81,6 +87,12 @@ def main():
     # Main Layout
     if backend_state["error"]:
         st.error(f"Backend Error: {backend_state['error']}")
+
+    render_browser_microphone(
+        manager,
+        enabled=is_running and backend_state.get("source") in {"browser_mic", "elevenlabs_live"},
+    )
+    render_analysis_status(backend_state)
         
     render_action_zone(backend_state["latest_command"])
     render_transcript(

@@ -3,6 +3,7 @@ import pytest
 
 from backend.live_analysis import (
     analyze_live_text_flow,
+    analyze_with_gpt54_mini,
     RollingTranscript,
     TranscriptChunk,
     rule_based_analyze,
@@ -68,7 +69,7 @@ def test_rule_based_analyze(session_context, audience_profile):
     assert isinstance(command, UICommand)
     assert command.type == "neutral"
     assert command.priority == "low"
-    assert command.headline == "Keep listening"
+    assert command.headline == "Continue"
 
 @pytest.mark.asyncio
 async def test_analyze_live_text_flow_neutral_fallback(session_context, audience_profile):
@@ -97,4 +98,38 @@ async def test_analyze_live_text_flow_neutral_fallback(session_context, audience
         
     assert len(commands) >= 1
     assert all(cmd.type == "neutral" for cmd in commands)
-    assert commands[0].headline == "Keep listening"
+    assert commands[0].headline == "Continue"
+
+
+@pytest.mark.asyncio
+async def test_analyze_with_gpt54_mini_reports_empty_output(session_context, audience_profile):
+    class EmptyResponse:
+        output_text = ""
+
+    class FakeResponses:
+        async def create(self, **kwargs):
+            return EmptyResponse()
+
+    class FakeClient:
+        responses = FakeResponses()
+
+    errors = []
+    rolling = RollingTranscript(max_chunks=5)
+    rolling.append(
+        TranscriptChunk(
+            timestamp="00:00:01",
+            speaker="Alice",
+            text="Explain RAG clearly for beginners.",
+        )
+    )
+
+    command = await analyze_with_gpt54_mini(
+        rolling,
+        session_context,
+        audience_profile,
+        client=FakeClient(),
+        on_error=errors.append,
+    )
+
+    assert command.type == "neutral"
+    assert errors == ["OpenAI returned an empty output_text."]

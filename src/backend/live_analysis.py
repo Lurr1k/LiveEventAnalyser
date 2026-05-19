@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
 import time
 from collections import deque
 from dataclasses import asdict, dataclass, field
@@ -188,6 +189,8 @@ async def analyze_with_gpt54_mini(
     timeout_seconds: float = 8.0,
     use_llm: bool = True,
     analysis_interval_seconds: float = 5.0,
+    on_error: Any | None = None,
+    on_success: Any | None = None,
 ) -> UICommand:
     fallback = rule_based_analyze(rolling, session_context, audience_profile)
     if not rolling.chunks or not use_llm:
@@ -198,8 +201,10 @@ async def analyze_with_gpt54_mini(
             from openai import AsyncOpenAI
             client = AsyncOpenAI()
         except ImportError:
+            _notify_analysis_error(on_error, "openai package is not installed")
             return fallback
-        except Exception:
+        except Exception as exc:
+            _notify_analysis_error(on_error, str(exc))
             return fallback
 
     payload = build_llm_payload(
@@ -213,7 +218,7 @@ async def analyze_with_gpt54_mini(
     try:
         response = await asyncio.wait_for(
             client.responses.create(
-                model=model,
+                model=os.getenv("OPENAI_MODEL", model),
                 instructions=SYSTEM_PROMPT,
                 input=json.dumps(payload, ensure_ascii=False),
                 text={"format": UI_COMMAND_SCHEMA},
@@ -221,9 +226,14 @@ async def analyze_with_gpt54_mini(
             ),
             timeout=timeout_seconds,
         )
+        if not response.output_text:
+            _notify_analysis_error(on_error, "OpenAI returned an empty output_text.")
+            return fallback
         data = json.loads(response.output_text)
+        _notify_analysis_success(on_success)
         return _coerce_ui_command(data, fallback)
-    except Exception:
+    except Exception as exc:
+        _notify_analysis_error(on_error, str(exc))
         return fallback
 
 
@@ -238,6 +248,8 @@ async def analyze_live_text_flow(
     analysis_interval_seconds: float = 5.0,
     min_analysis_interval_seconds: float | None = None,
     use_llm: bool = True,
+    on_analysis_error: Any | None = None,
+    on_analysis_success: Any | None = None,
 ) -> AsyncIterator[UICommand]:
     rolling = RollingTranscript(max_chunks=max_window_chunks)
     chunk_queue: asyncio.Queue[dict[str, Any] | str | None] = asyncio.Queue()
@@ -274,6 +286,8 @@ async def analyze_live_text_flow(
                         model=model,
                         use_llm=use_llm,
                         analysis_interval_seconds=interval,
+                        on_error=on_analysis_error,
+                        on_success=on_analysis_success,
                     )
                     analyzed_count = received_count
                 next_analysis_at = time.monotonic() + interval
@@ -299,6 +313,8 @@ async def analyze_live_text_flow(
                 model=model,
                 use_llm=use_llm,
                 analysis_interval_seconds=interval,
+                on_error=on_analysis_error,
+                on_success=on_analysis_success,
             )
         if producer_errors:
             raise producer_errors[0]
@@ -362,3 +378,15 @@ def _parse_timestamp_seconds(timestamp: str | None) -> int | None:
     except ValueError:
         return None
     return hours * 3600 + minutes * 60 + seconds
+
+
+def _notify_analysis_error(callback: Any | None, message: str) -> None:
+    if callback is None:
+        return
+    callback(message)
+
+
+def _notify_analysis_success(callback: Any | None) -> None:
+    if callback is None:
+        return
+    callback()

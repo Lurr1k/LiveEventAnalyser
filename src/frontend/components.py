@@ -20,9 +20,9 @@ def render_sidebar(sessions, attendees, profile, is_running):
 
         source = st.selectbox(
             "Transcript Source",
-            options=["elevenlabs_live", "demo_markdown"],
+            options=["browser_mic", "demo_markdown"],
             format_func=lambda value: {
-                "elevenlabs_live": "ElevenLabs live mic",
+                "browser_mic": "Browser mic",
                 "demo_markdown": "Demo markdown replay",
             }[value],
             disabled=is_running,
@@ -51,6 +51,45 @@ def render_sidebar(sessions, attendees, profile, is_running):
                 st.caption(f"- {intent}")
                 
     return selected_id, source, "none"
+
+
+def render_browser_microphone(manager, *, enabled: bool):
+    """Render browser microphone capture for the live ElevenLabs source."""
+    if not enabled:
+        return
+
+    st.caption("Browser microphone capture")
+    try:
+        import av
+        from streamlit_webrtc import WebRtcMode, webrtc_streamer
+    except ImportError:
+        st.error("Browser mic capture requires streamlit-webrtc and av.")
+        return
+
+    resampler = av.AudioResampler(format="s16", layout="mono", rate=16000)
+
+    def audio_frame_callback(frame):
+        for resampled in resampler.resample(frame):
+            manager.submit_audio_chunk(resampled.to_ndarray().tobytes())
+        return frame
+
+    webrtc_streamer(
+        key="browser-mic-elevenlabs",
+        mode=WebRtcMode.SENDONLY,
+        audio_frame_callback=audio_frame_callback,
+        media_stream_constraints={"video": False, "audio": True},
+        async_processing=True,
+    )
+
+
+def render_analysis_status(state):
+    status = state.get("analysis_status", "idle")
+    if status == "model":
+        st.caption("Analysis: model")
+    elif status == "fallback":
+        st.warning(f"Analysis fallback: {state.get('analysis_error') or 'No model output.'}")
+    elif state.get("is_running"):
+        st.caption("Analysis: waiting for transcript window")
 
 def render_transcript(chunks, *, status="disconnected", error=None):
     """Render the rolling transcript feed at the bottom."""
@@ -135,11 +174,15 @@ def render_action_zone(command):
             bg_color = "rgba(9, 171, 59, 0.15)"
             border_color = "rgb(9, 171, 59)"
             
+    headline = escape(str(command.headline))
+    detail = escape(str(command.detail))
+    related_topic = escape(str(command.related_topic)) if command.related_topic else ""
+
     html = f"""
     <div style="background-color: {bg_color}; border: 2px solid {border_color}; border-radius: 1rem; padding: 3rem 2rem; text-align: center; margin: 1rem 0 3rem 0; box-shadow: 0 4px 20px rgba(0,0,0,0.2);">
-        <h1 style="margin-top: 0; margin-bottom: 1rem; font-size: 3.5rem; line-height: 1.2;">{command.headline}</h1>
-        <p style="font-size: 1.5rem; color: #E0E0E0; margin-bottom: 0;">{command.detail}</p>
-        {f'<p style="font-size: 1rem; color: #999; margin-top: 1rem;"><em>Related Topic: {command.related_topic}</em></p>' if command.related_topic else ''}
+        <h1 style="margin-top: 0; margin-bottom: 1rem; font-size: 3.5rem; line-height: 1.2;">{headline}</h1>
+        <p style="font-size: 1.5rem; color: #E0E0E0; margin-bottom: 0;">{detail}</p>
+        {f'<p style="font-size: 1rem; color: #999; margin-top: 1rem;"><em>Related Topic: {related_topic}</em></p>' if related_topic else ''}
     </div>
     """
     
