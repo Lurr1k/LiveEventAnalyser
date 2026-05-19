@@ -104,10 +104,15 @@ Done when:
 ### 6. Topic Fatigue HUD Support
 
 Tasks:
-- Pass rolling transcript context and agenda fields to the LLM.
+- Pass rolling transcript context, transcript window metadata, and agenda fields to the LLM.
 - Let the LLM decide if a discussion is lingering too long.
 - Include `next_agenda_item` when available.
 - Do not detect repeated topics with backend keyword rules.
+
+Done when:
+- The LLM payload includes agenda context.
+- The LLM payload includes rolling transcript window duration/count metadata.
+- The backend has no keyword-based fatigue detector.
 
 ### 7. FOMO Generator Support
 
@@ -116,6 +121,11 @@ Tasks:
 - Let the LLM decide whether a highly actionable insight exists.
 - Generate short summary snippets from model output only.
 - Do not detect FOMO snippets with backend keyword rules.
+
+Done when:
+- The audience profile includes intent distribution.
+- The LLM payload includes FOMO context based on the current transcript window and attendee intents.
+- The backend has no keyword-based FOMO detector.
 
 ## Backend MVP Priority
 

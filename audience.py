@@ -93,6 +93,7 @@ def build_audience_profile(
         "attendee_count": attendee_count,
         "ai_experience_distribution": _with_expected_experience_keys(experience),
         "academic_background_distribution": dict(backgrounds),
+        "intent_distribution": dict(intents),
         "top_intents": [intent for intent, _ in intents.most_common(5)],
         "beginner_ratio": beginner_count / attendee_count if attendee_count else 0.0,
     }

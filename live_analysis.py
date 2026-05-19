@@ -22,7 +22,7 @@ DEFAULT_MODEL = "gpt-5.4-mini"
 
 SYSTEM_PROMPT = """You are the live analysis engine for a real-time speaker HUD.
 
-Analyze only the supplied rolling transcript, session metadata, agenda, and audience profile.
+Analyze only the supplied rolling transcript, transcript window metadata, session metadata, agenda, audience profile, and FOMO context.
 Do not invent facts, names, audience traits, or claims that are not present in the input.
 
 Return exactly one UI command as JSON. The command must help a speaker or moderator act now.
@@ -33,8 +33,10 @@ Rules:
 - detail must be one short sentence.
 - priority should be high only for urgent clarity, fatigue, or strong FOMO moments.
 - coaching means audience-aware clarity or engagement advice.
-- fatigue means the same topic is lingering or repeating.
-- fomo means a concise shareable insight for absent or adjacent-interest attendees.
+- fatigue means the current discussion appears to be lingering, looping, or blocking agenda progress based on the transcript window and agenda context.
+- for fatigue, prefer next_agenda_item when it exists.
+- fomo means a concise shareable insight for absent or adjacent-interest attendees based on the current transcript window and audience intent context.
+- for fomo, write detail as a short notification-style snippet grounded in the transcript.
 - neutral means keep listening.
 """
 
@@ -50,10 +52,9 @@ UI_COMMAND_SCHEMA: dict[str, Any] = {
             "priority": {"type": "string", "enum": ["low", "medium", "high"]},
             "headline": {"type": "string", "minLength": 1, "maxLength": 80},
             "detail": {"type": "string", "minLength": 1, "maxLength": 220},
-            "target": {"type": "string", "enum": ["speaker", "moderator", "attendee"]},
             "related_topic": {"type": ["string", "null"], "maxLength": 80},
         },
-        "required": ["type", "priority", "headline", "detail", "target", "related_topic"],
+        "required": ["type", "priority", "headline", "detail", "related_topic"],
     },
 }
 
@@ -78,6 +79,22 @@ class RollingTranscript:
         return "\n".join(
             f"[{chunk.timestamp}] {chunk.speaker}: {chunk.text}" for chunk in self.chunks
         )
+
+    def as_dicts(self) -> list[dict[str, str]]:
+        return [asdict(chunk) for chunk in self.chunks]
+
+    def window_metadata(self) -> dict[str, Any]:
+        timestamps = [chunk.timestamp for chunk in self.chunks]
+        oldest_timestamp = timestamps[0] if timestamps else None
+        newest_timestamp = timestamps[-1] if timestamps else None
+        duration_seconds = _timestamp_delta_seconds(oldest_timestamp, newest_timestamp)
+        return {
+            "chunk_count": len(self.chunks),
+            "max_window_chunks": self.max_chunks,
+            "oldest_timestamp": oldest_timestamp,
+            "newest_timestamp": newest_timestamp,
+            "transcript_duration_seconds": duration_seconds,
+        }
 
 
 def load_attendees(path: str | Path):
@@ -109,10 +126,56 @@ def rule_based_analyze(
     audience_profile: dict[str, Any],
 ) -> UICommand:
     return analyze_rules(
-        [asdict(chunk) for chunk in rolling.chunks],
+        rolling.as_dicts(),
         session_context,
         audience_profile,
     )
+
+
+def build_llm_payload(
+    rolling: RollingTranscript,
+    session_context: dict[str, Any],
+    audience_profile: dict[str, Any],
+    fallback: UICommand,
+    *,
+    analysis_interval_seconds: float = 5.0,
+) -> dict[str, Any]:
+    agenda_context = {
+        "agenda": session_context.get("agenda", []),
+        "current_agenda_item": session_context.get("current_agenda_item"),
+        "next_agenda_item": session_context.get("next_agenda_item"),
+    }
+    transcript_window = {
+        "chunks": rolling.as_dicts(),
+        "text": rolling.text(),
+        "metadata": rolling.window_metadata(),
+    }
+    fomo_context = {
+        "top_intents": audience_profile.get("top_intents", []),
+        "intent_distribution": audience_profile.get("intent_distribution", {}),
+        "attendee_count": audience_profile.get("attendee_count", 0),
+        "current_window_text": transcript_window["text"],
+        "snippet_requirements": {
+            "source": "current transcript window only",
+            "style": "short notification-style summary",
+            "do_not_invent_names": True,
+            "intended_audience": "attendees with adjacent interests",
+        },
+    }
+    return {
+        "session_context": session_context,
+        "agenda_context": agenda_context,
+        "audience_profile": audience_profile,
+        "fomo_context": fomo_context,
+        "transcript_window": transcript_window,
+        "analysis_context": {
+            "analysis_interval_seconds": analysis_interval_seconds,
+            "fatigue_decision_owner": "model",
+            "fomo_decision_owner": "model",
+            "backend_keyword_detection": False,
+        },
+        "fallback_signal": asdict(fallback),
+    }
 
 
 async def analyze_with_gpt54_mini(
@@ -124,6 +187,7 @@ async def analyze_with_gpt54_mini(
     model: str = DEFAULT_MODEL,
     timeout_seconds: float = 8.0,
     use_llm: bool = True,
+    analysis_interval_seconds: float = 5.0,
 ) -> UICommand:
     fallback = rule_based_analyze(rolling, session_context, audience_profile)
     if not rolling.chunks or not use_llm:
@@ -138,12 +202,13 @@ async def analyze_with_gpt54_mini(
         except Exception:
             return fallback
 
-    payload = {
-        "session_context": session_context,
-        "audience_profile": audience_profile,
-        "rolling_transcript": rolling.text(),
-        "fallback_signal": asdict(fallback),
-    }
+    payload = build_llm_payload(
+        rolling,
+        session_context,
+        audience_profile,
+        fallback,
+        analysis_interval_seconds=analysis_interval_seconds,
+    )
 
     try:
         response = await asyncio.wait_for(
@@ -208,6 +273,7 @@ async def analyze_live_text_flow(
                         client=client,
                         model=model,
                         use_llm=use_llm,
+                        analysis_interval_seconds=interval,
                     )
                     analyzed_count = received_count
                 next_analysis_at = time.monotonic() + interval
@@ -232,6 +298,7 @@ async def analyze_live_text_flow(
                 client=client,
                 model=model,
                 use_llm=use_llm,
+                analysis_interval_seconds=interval,
             )
         if producer_errors:
             raise producer_errors[0]
@@ -264,7 +331,6 @@ def _coerce_ui_command(data: dict[str, Any], fallback: UICommand) -> UICommand:
             priority=data["priority"],
             headline=data["headline"],
             detail=data["detail"],
-            target=data["target"],
             related_topic=data.get("related_topic"),
         )
     except KeyError:
@@ -274,6 +340,25 @@ def _coerce_ui_command(data: dict[str, Any], fallback: UICommand) -> UICommand:
         return fallback
     if command.priority not in {"low", "medium", "high"}:
         return fallback
-    if command.target not in {"speaker", "moderator", "attendee"}:
-        return fallback
     return command
+
+
+def _timestamp_delta_seconds(start: str | None, end: str | None) -> int | None:
+    start_seconds = _parse_timestamp_seconds(start)
+    end_seconds = _parse_timestamp_seconds(end)
+    if start_seconds is None or end_seconds is None:
+        return None
+    return max(0, end_seconds - start_seconds)
+
+
+def _parse_timestamp_seconds(timestamp: str | None) -> int | None:
+    if not timestamp:
+        return None
+    parts = str(timestamp).split(":")
+    if len(parts) != 3:
+        return None
+    try:
+        hours, minutes, seconds = (int(float(part)) for part in parts)
+    except ValueError:
+        return None
+    return hours * 3600 + minutes * 60 + seconds

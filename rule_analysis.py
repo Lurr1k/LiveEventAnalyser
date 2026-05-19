@@ -10,7 +10,6 @@ class UICommand:
     priority: str
     headline: str
     detail: str
-    target: str
     related_topic: str | None = None
 
 
@@ -34,6 +33,5 @@ def neutral_command() -> UICommand:
         priority="low",
         headline="Keep listening",
         detail="No model analysis is available for this time window.",
-        target="speaker",
         related_topic=None,
     )

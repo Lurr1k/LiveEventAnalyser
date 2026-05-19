@@ -65,6 +65,7 @@ Audience profile shape:
     "attendee_count": 0,
     "ai_experience_distribution": {},
     "academic_background_distribution": {},
+    "intent_distribution": {},
     "top_intents": ["string"],
     "beginner_ratio": 0.0,
 }
@@ -113,7 +114,6 @@ UICommand(
     priority="low",
     headline="Keep listening",
     detail="No model analysis is available for this time window.",
-    target="speaker",
     related_topic=None,
 )
 ```
@@ -129,6 +129,7 @@ Key functions:
 ```python
 analyze_with_gpt54_mini(...)
 analyze_live_text_flow(...)
+build_llm_payload(...)
 rule_based_analyze(...)
 ```
 
@@ -147,11 +148,83 @@ Compatibility note:
 The GPT payload contains:
 
 - active session context
+- agenda context
 - audience profile
-- rolling transcript text
+- FOMO context:
+  - top attendee intents
+  - full intent distribution
+  - attendee count
+  - current transcript window text
+  - snippet requirements for model-generated notification text
+- rolling transcript chunks and formatted text
+- rolling transcript window metadata:
+  - chunk count
+  - max window size
+  - oldest transcript timestamp
+  - newest transcript timestamp
+  - transcript duration in seconds when timestamps are parseable
+- analysis context:
+  - configured analysis interval
+  - `fatigue_decision_owner: "model"`
+  - `fomo_decision_owner: "model"`
+  - `backend_keyword_detection: False`
 - neutral fallback command
 
 The model must return one structured `UICommand`.
+
+### Step 6 Topic Fatigue Support
+
+Topic fatigue is supported by context, not backend detection.
+
+The backend passes these fields to the model:
+
+```python
+{
+    "agenda_context": {
+        "agenda": [...],
+        "current_agenda_item": "...",
+        "next_agenda_item": "...",
+    },
+    "transcript_window": {
+        "text": "...",
+        "chunks": [...],
+        "metadata": {
+            "chunk_count": 0,
+            "max_window_chunks": 24,
+            "oldest_timestamp": "00:00:00 | None",
+            "newest_timestamp": "00:00:05 | None",
+            "transcript_duration_seconds": 5,
+        },
+    },
+}
+```
+
+The model decides whether the discussion is lingering, looping, or blocking agenda progress. The backend does not count repeated topic words.
+
+### Step 7 FOMO Support
+
+FOMO generation is supported by context, not backend detection.
+
+The backend passes this block to the model:
+
+```python
+{
+    "fomo_context": {
+        "top_intents": [...],
+        "intent_distribution": {...},
+        "attendee_count": 0,
+        "current_window_text": "...",
+        "snippet_requirements": {
+            "source": "current transcript window only",
+            "style": "short notification-style summary",
+            "do_not_invent_names": True,
+            "intended_audience": "attendees with adjacent interests",
+        },
+    },
+}
+```
+
+The model decides whether the current transcript contains an actionable insight worth sharing. The backend does not scan for insight phrases.
 
 ### `llm_algorithm.md`
 
@@ -237,4 +310,4 @@ Smoke test without an API key should produce neutral fallback commands, not sema
 - Current attendee data has no session-specific registration mapping.
 - GPT calls require `OPENAI_API_KEY` or an explicitly configured `AsyncOpenAI` client.
 - Without model credentials, analysis returns neutral fallback only.
-- There are no backend keyword lists for jargon, insight detection, or fatigue detection.
+- There are no backend keyword lists for jargon, insight detection, fatigue detection, or FOMO detection.
